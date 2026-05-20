@@ -29,4 +29,13 @@ config CLK_EXYNOS850
 	  This enables common clock driver support for platforms based
 	  on Samsung Exynos850 SoC.
 
+config CLK_EXYNOS9610
+	bool "Clock driver for Samsung's Exynos9610 SoC"
+	select CLK_CCF
+	help
+	  Minimal CMU_TOP provider for Samsung Exynos9610-class parts
+	  (e.g. SM-P615 / gta4xl) during uboot1st bring-up. Reports the
+	  rates S-Boot leaves configured so DM-aware drivers can bind
+	  without relying on fixed-clock stubs.
+
 endmenu

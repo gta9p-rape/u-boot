@@ -257,7 +257,6 @@ config TARGET_EXYNOS_MOBILE
 	select ARM64
 	select BOARD_EARLY_INIT_F
 	select CLK_EXYNOS
-	select LINUX_KERNEL_IMAGE_HEADER
 	select OF_CONTROL
 
 config SYS_SOC

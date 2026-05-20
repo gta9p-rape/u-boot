@@ -72,6 +72,14 @@ config SYSRESET_CV1800B
 	help
 	  Enable system reset support for Sophgo cv1800b SoC.
 
+config SYSRESET_EXYNOS
+	bool "Enable support for Samsung Exynos PMU System Reset"
+	depends on ARCH_EXYNOS && SYSCON
+	help
+	  Write to the PMU SWRESET register (offset 0x400 by default) to
+	  trigger a full SoC warm reset. Used on Exynos 9610/9611-class
+	  parts that don't expose PSCI to U-Boot.
+
 config POWEROFF_GPIO
 	bool "Enable support for GPIO poweroff driver"
 	depends on DM_GPIO

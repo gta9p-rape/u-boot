@@ -6,6 +6,7 @@
  */
 
 #include <asm/armv8/mmu.h>
+#include <asm/io.h>
 #include <blk.h>
 #include <bootflow.h>
 #include <ctype.h>
@@ -59,9 +60,13 @@ struct mm_region *mem_map = exynos_mem_map;
 
 static const char *exynos_prev_bl_get_bootargs(void)
 {
-	void *prev_bl_fdt_base = (void *)get_prev_bl_fdt_addr();
+	phys_addr_t prev_bl_fdt_addr = get_prev_bl_fdt_addr();
+	void *prev_bl_fdt_base = (void *)prev_bl_fdt_addr;
 	int chosen_node_offset, ret;
 	const struct fdt_property *bootargs_prop;
+
+	if (!prev_bl_fdt_addr)
+		return NULL;
 
 	ret = fdt_check_header(prev_bl_fdt_base);
 	if (ret < 0) {
@@ -201,6 +206,7 @@ static void exynos_env_setup(void)
 
 static int exynos_blk_env_setup(void)
 {
+#if IS_ENABLED(CONFIG_BLK) && IS_ENABLED(CONFIG_EFI_PARTITION) && IS_ENABLED(CONFIG_MMC)
 	const char *blk_ifname;
 	int blk_dev = 0;
 	struct blk_desc *blk_desc;
@@ -245,10 +251,15 @@ static int exynos_blk_env_setup(void)
 	}
 
 	return 0;
+#else
+	return 0;
+#endif
 }
 
 static int exynos_fastboot_setup(void)
 {
+#if IS_ENABLED(CONFIG_USB_FUNCTION_FASTBOOT) && IS_ENABLED(CONFIG_FASTBOOT_FLASH_MMC) && \
+	IS_ENABLED(CONFIG_EFI_PARTITION) && IS_ENABLED(CONFIG_MMC)
 	struct blk_desc *blk_dev;
 	struct disk_partition info = {0};
 	char buf[128];
@@ -292,13 +303,21 @@ static int exynos_fastboot_setup(void)
 	}
 
 	return 0;
+#else
+	return 0;
+#endif
 }
 
 int board_fdt_blob_setup(void **fdtp)
 {
+	phys_addr_t prev_bl_fdt_addr;
+
 	/* If internal FDT is not available, use the external FDT instead. */
-	if (fdt_check_header(*fdtp))
-		*fdtp = (void *)get_prev_bl_fdt_addr();
+	if (fdt_check_header(*fdtp)) {
+		prev_bl_fdt_addr = get_prev_bl_fdt_addr();
+		if (prev_bl_fdt_addr)
+			*fdtp = (void *)prev_bl_fdt_addr;
+	}
 
 	return 0;
 }
@@ -358,11 +377,52 @@ int board_init(void)
 	return 0;
 }
 
+/*
+ * Sample the ALIVE-bank front keys directly out of the SoC's GPA1 data
+ * register and expose them as env vars for the preboot script. We bypass
+ * pinctrl/gpio drivers on purpose: this stage is single-CPU, pre-shell,
+ * and the previous bootloader already left these pins as inputs with
+ * sane pulls. The peripheral block is identity-mapped by exynos_mem_map[0]
+ * so a direct readl on the physical address is safe. Bits are active-low.
+ */
+static void exynos_sample_keys(void)
+{
+	ofnode keys_node, gpio_node;
+	u32 voldown_bit, volup_bit, power_bit;
+	phys_addr_t alive_base;
+	u32 val;
+
+	keys_node = ofnode_by_compatible(ofnode_null(),
+					 "samsung,exynos-uboot1st-keys");
+	if (!ofnode_valid(keys_node))
+		return;
+
+	gpio_node = ofnode_parse_phandle(keys_node, "gpio-base", 0);
+	if (!ofnode_valid(gpio_node))
+		return;
+
+	alive_base = ofnode_get_addr(gpio_node);
+	if (alive_base == FDT_ADDR_T_NONE)
+		return;
+
+	voldown_bit = ofnode_read_u32_default(keys_node, "voldown-bit", 6);
+	volup_bit = ofnode_read_u32_default(keys_node, "volup-bit", 5);
+	power_bit = ofnode_read_u32_default(keys_node, "power-bit", 7);
+
+	/* GPA1 DAT lives at ALIVE base + 0x44. */
+	val = readl((void *)(uintptr_t)(alive_base + 0x44));
+
+	env_set_ulong("key_voldown", !(val & BIT(voldown_bit)));
+	env_set_ulong("key_volup", !(val & BIT(volup_bit)));
+	env_set_ulong("key_power", !(val & BIT(power_bit)));
+}
+
 int misc_init_r(void)
 {
 	int ret;
 
 	exynos_env_setup();
+	exynos_sample_keys();
 
 	ret = exynos_blk_env_setup();
 	if (ret)

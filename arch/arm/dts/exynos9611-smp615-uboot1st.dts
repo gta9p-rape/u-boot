@@ -1,0 +1,141 @@
+// SPDX-License-Identifier: GPL-2.0+
+/*
+ * Minimal Samsung SM-P615 / Exynos 9611 device tree for uboot1st bring-up.
+ *
+ * Just enough to get the temporary U-Boot payload up: timer, UART, DRAM
+ * map matching the SoC's published memory layout, the framebuffer S-Boot
+ * leaves running for Linux, the PMU reset path, and the ALIVE GPIO bank
+ * where the volume/power keys live.
+ */
+
+/dts-v1/;
+
+#include <dt-bindings/clock/samsung,exynos9610-cmu.h>
+
+/ {
+	model = "Samsung Galaxy Tab S6 Lite LTE (SM-P615) uboot1st";
+	compatible = "samsung,gta4xl", "samsung,exynos9611", "samsung,exynos9610";
+
+	#address-cells = <2>;
+	#size-cells = <2>;
+
+	model_info-chip = <9611>;
+	model_info-hw_rev = <0>;
+	model_info-hw_rev_end = <255>;
+
+	aliases {
+		serial0 = &serial_0;
+		display0 = &framebuffer0;
+	};
+
+	chosen {
+		#address-cells = <2>;
+		#size-cells = <2>;
+		ranges;
+		stdout-path = "serial0:115200n8";
+
+		framebuffer0: framebuffer@ca000000 {
+			compatible = "simple-framebuffer";
+			status = "okay";
+			reg = <0x0 0xca000000 0x0 0x01400000>;
+			width = <1200>;
+			height = <2000>;
+			stride = <(1200 * 4)>;
+			format = "a8r8g8b8";
+		};
+	};
+
+	/*
+	 * gta4xl is a 4 GB part. Exynos 9611's first DRAM half lives in the
+	 * 32-bit window starting at 0x80000000; the rest is mapped above 4 GB
+	 * at 0x8_80000000. The third bank in the SoC DTSI (0x9_00000000)
+	 * stays unpopulated on this device.
+	 */
+	memory@80000000 {
+		device_type = "memory";
+		reg = <0x0 0x80000000 0x0 0x80000000>;
+	};
+
+	memory@880000000 {
+		device_type = "memory";
+		reg = <0x8 0x80000000 0x0 0x80000000>;
+	};
+
+	reserved-memory {
+		#address-cells = <2>;
+		#size-cells = <2>;
+		ranges;
+
+		el3_monitor: el3-monitor@bff80000 {
+			reg = <0x0 0xbff80000 0x0 0x00040000>;
+			no-map;
+		};
+
+		bootloader_fb: framebuffer@ca000000 {
+			reg = <0x0 0xca000000 0x0 0x01400000>;
+			no-map;
+		};
+	};
+
+	timer {
+		compatible = "arm,armv8-timer";
+		clock-frequency = <26000000>;
+	};
+
+	/*
+	 * Samsung's Exynos9611 CMU lives at 0x12100000. We model just enough
+	 * of CMU_TOP here (rates only, no MUX/DIV reads yet) to feed UART.
+	 * UFS/USB get added when those drivers come online.
+	 */
+	cmu_top: clock-controller@12100000 {
+		compatible = "samsung,exynos9610-cmu-top";
+		reg = <0x0 0x12100000 0x0 0x8000>;
+		#clock-cells = <1>;
+	};
+
+	serial_0: serial@13820000 {
+		compatible = "samsung,exynos8895-uart", "samsung,exynos4210-uart";
+		reg = <0x0 0x13820000 0x0 0x100>;
+		reg-io-width = <1>;
+		id = <0>;
+		clocks = <&cmu_top CLK_EXYNOS9610_GOUT_PERI_UART0_PCLK>,
+			 <&cmu_top CLK_EXYNOS9610_GOUT_PERI_UART0_UCLK>;
+		clock-names = "uart", "clk_uart_baud0";
+		samsung,uart-fifosize = <256>;
+		status = "okay";
+	};
+
+	/*
+	 * PMU lives at 0x11860000; SWRESET (offset 0x400) is "write 1 to
+	 * full-system reset". The sysreset-exynos driver hangs off this.
+	 */
+	pmu: pmu@11860000 {
+		compatible = "samsung,exynos9610-pmu", "syscon";
+		reg = <0x0 0x11860000 0x0 0x10000>;
+	};
+
+	sysreset {
+		compatible = "samsung,exynos-sysreset";
+		samsung,pmureg = <&pmu>;
+		offset = <0x0400>;
+	};
+
+	/*
+	 * ALIVE GPIO bank. GPA1 (offset 0x40) drives the front buttons:
+	 *   bit 5 = volume up, bit 6 = volume down, bit 7 = power.
+	 * Active-low. The board file reads the DAT register directly
+	 * rather than going through a pinctrl driver we haven't ported.
+	 */
+	gpio_alive: pinctrl@11850000 {
+		compatible = "samsung,exynos9610-pinctrl-uboot1st";
+		reg = <0x0 0x11850000 0x0 0x1000>;
+	};
+
+	keys {
+		compatible = "samsung,exynos-uboot1st-keys";
+		gpio-base = <&gpio_alive>;
+		volup-bit = <5>;
+		voldown-bit = <6>;
+		power-bit = <7>;
+	};
+};
